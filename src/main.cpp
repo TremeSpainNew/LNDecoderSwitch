@@ -115,8 +115,6 @@ void setup() {
   tipoDesvio = lncv_R(1);
 
   Serial.print("📌 Dirección: "); Serial.println(myAddress);
-  Serial.print("🔧 Tipo de desvío: "); Serial.println(tipoDesvio);
-  Serial.print("⏳ Tiempo de activación: "); Serial.println(delayTime);
 
   programmingMode = false;
 
