@@ -1,15 +1,57 @@
 #include <Arduino.h>
 #include <LocoNet.h>
 #include <EEPROM.h>
-#include <PCF8574.h>
+#include <config.h>
 
-lnMsg *LnPacket;
-LocoNetCVClass lnCV;
+#if tipoDispositivo == 0
+#include <PCF8574.h>
 PCF8574 pcf8574;
 #define numSwitch 4
 #define nLNCV (numSwitch * 2 + 1)  // LNCV0 = dirección + 2 LNCV por cada desvío
-
 int conexionTurnout[numSwitch * 2] = {2, 3, 4, 5, 6, 9, 10, 11};  // Pines donde se conectan los switch
+
+void leerEstadosDesvios(bool inicial = false) {
+  static uint8_t estadoAnterior = 0xFF;  // Variable estática para almacenar el último estado conocido
+
+  if (lncv_R(3) == 1) { // Solo si la LNCV 3 está habilitada
+    uint8_t estados = pcf8574.read();
+
+    if (inicial || estados != estadoAnterior) {  // Enviar todos los estados solo al iniciar o si hubo cambios
+      for (int i = 0; i < numSwitch; i++) {
+        bool cerrado = !bitRead(estados, i * 2);
+        bool abierto = !bitRead(estados, i * 2 + 1);
+        bool cerradoPrev = !bitRead(estadoAnterior, i * 2);
+        bool abiertoPrev = !bitRead(estadoAnterior, i * 2 + 1);
+
+        if (inicial || cerrado != cerradoPrev || abierto != abiertoPrev) {  // Solo reportar cambios
+          Serial.print("📢 Desvío ");
+          Serial.print(i + 1);
+          Serial.print(": ");
+          Serial.print(cerrado ? "Cerrado " : "");
+          Serial.print(abierto ? "Abierto " : "");
+          Serial.println();
+
+          // Reportar estado SOLO si cambió
+          reportSwitchOutputs(myAddress + i, cerrado, abierto);
+        }
+      }
+
+      estadoAnterior = estados;  // Actualizar estado anterior solo después de procesar cambios
+    }
+  }
+}
+
+#elif tipoDispositivo == 1
+#define numSwitch 8
+#define nLNCV (numSwitch * 2 + 1)  // LNCV0 = dirección + 2 LNCV por cada desvío
+int conexionTurnout[numSwitch * 2] = {2, 3, 4, 5, 6, 9, 10, 11, 12, 13, A0, A1, A2, A3, A4, A5};  // Pines donde se conectan los switch
+
+#else
+#error "Valor no válido para tipoDispositivo. Debe ser 0 o 1."
+#endif
+
+lnMsg *LnPacket;
+LocoNetCVClass lnCV;
 
 struct SwitchState {
   uint8_t pin;            // Pin de activación
@@ -70,37 +112,6 @@ void reportSwitchOutputs(uint8_t Address, uint8_t ClosedOutput, uint8_t ThrownOu
   LocoNet.send(OPC_SW_REP, AddrL, AddrH);
 }
 
-void leerEstadosDesvios(bool inicial = false) {
-  static uint8_t estadoAnterior = 0xFF;  // Variable estática para almacenar el último estado conocido
-
-  if (lncv_R(3) == 1) { // Solo si la LNCV 3 está habilitada
-    uint8_t estados = pcf8574.read();
-
-    if (inicial || estados != estadoAnterior) {  // Enviar todos los estados solo al iniciar o si hubo cambios
-      for (int i = 0; i < numSwitch; i++) {
-        bool cerrado = !bitRead(estados, i * 2);
-        bool abierto = !bitRead(estados, i * 2 + 1);
-        bool cerradoPrev = !bitRead(estadoAnterior, i * 2);
-        bool abiertoPrev = !bitRead(estadoAnterior, i * 2 + 1);
-
-        if (inicial || cerrado != cerradoPrev || abierto != abiertoPrev) {  // Solo reportar cambios
-          Serial.print("📢 Desvío ");
-          Serial.print(i + 1);
-          Serial.print(": ");
-          Serial.print(cerrado ? "Cerrado " : "");
-          Serial.print(abierto ? "Abierto " : "");
-          Serial.println();
-
-          // Reportar estado SOLO si cambió
-          reportSwitchOutputs(myAddress + i, cerrado, abierto);
-        }
-      }
-
-      estadoAnterior = estados;  // Actualizar estado anterior solo después de procesar cambios
-    }
-  }
-}
-
 // Configuración inicial
 void setup() {
   Serial.begin(9600);
@@ -108,7 +119,10 @@ void setup() {
   if (lncv_R(0) == 65534) resetLNCV();
 
   LocoNet.init(7);
-  pcf8574.begin(0x38);
+  #if tipoDispositivo == 0
+    pcf8574.begin(0x38);
+    leerEstadosDesvios(true);
+  #endif
   
   myAddress = lncv_R(0);
   delayTime = lncv_R(2);
@@ -122,8 +136,6 @@ void setup() {
     pinMode(conexionTurnout[i], OUTPUT);
     switches[i] = { static_cast<uint8_t>(conexionTurnout[i]), false, 0, 0 };
   }
-
-  leerEstadosDesvios(true);
 }
 
 void loop() {
@@ -145,8 +157,9 @@ void loop() {
       Serial.println(" desactivado");
     }
   }
-
-  leerEstadosDesvios(false);
+  #if tipoDispositivo == 0
+    leerEstadosDesvios(false);
+  #endif
 }
 
 // Manejo de solicitudes de cambio de desvío
